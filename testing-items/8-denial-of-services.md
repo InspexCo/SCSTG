@@ -1,6 +1,6 @@
 # 8. Denial of Services
 
-Improper contract logic can affect the availability of the contract. It should be made sure that the smart contract can function properly as designed.
+Improper contract logic can affect the availability of the contract. It should be made sure that the smart contract can function properly as designed without disruption from internal or external factors.
 
 ## 8.1. State changing functions that loop over unbounded data structures should not be used
 
@@ -55,7 +55,7 @@ From the example above, if one of the winners is a smart contract with a fallbac
 
 **Solution:**
 
-Use the “Pull over Push” pattern by changing the payment design to allow users to withdraw funds instead of sending funds to other accounts
+Use the “Pull over Push” pattern ([https://fravoll.github.io/solidity-patterns/pull_over_push.html](https://fravoll.github.io/solidity-patterns/pull_over_push.html)) by changing the payment design to allow users to withdraw funds instead of sending funds to other accounts.
 
 ## 8.3. Strict equalities should not cause the function to be unusable
 

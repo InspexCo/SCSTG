@@ -1,6 +1,6 @@
 # 5. Blockchain Data
 
-The usage of data on the blockchain should be properly done, including the storage, retrieval, and modification of data.
+The usage of data on the blockchain, including the storage, retrieval, and modification, should be done properly to keep the integrity, and sometimes confidentiality, of the data.
 
 ## 5.1. Result from random value generation should not be predictable
 
@@ -26,7 +26,7 @@ function random(uint256 range) internal view returns (uint256) {
 
 ## 5.2. Spot price should not be used as a data source for price oracles
 
-Price oracle can be implemented by fetching the real-time on-chain data from a decentralized exchange contract. However, the spot price can easily be manipulated; therefore, the price fetched from the oracle can be manipulated by a malicious actor.
+Price oracle can be implemented by fetching the real-time on-chain data from a decentralized exchange contract. However, the spot price can easily be manipulated; therefore, the price fetched from the oracle can be manipulated by a malicious actor. This is especially impactful when combined with flash loans.
 
 **Testing:**
 
