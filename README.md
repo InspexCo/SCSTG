@@ -28,7 +28,7 @@ The following people have contributed to the creation of this document:
 - [ErbaZZ](https://github.com/ErbaZZ) (Weerawat Pawanawiwat - weerawat.p@inspex.co)
 - [Rugsurely](https://github.com/Rugsurely) (Patipon Suwanbol - patipon.s@inspex.co)
 - [DeStinE21](https://github.com/DeStinE21) (Natsasit Jirathammanuwat - natsasit.j@inspex.co)
-- [Jusmistic](https://github.com/Jusmistic) (Puttimate Thammasaeng - puttimate.t@inspex.co)
+- [Jusmistic](https://github.com/Jusmistic) (Puttimet Thammasaeng - puttimet.t@inspex.co)
 - [x0r4w](https://github.com/x0r4w) (Sorawish Laovakul - sorawish.l@inspex.co)
 - [ICQCQ](https://github.com/ICQCQ) (Darunphop Pengkumta - darunphop.p@inspex.co)
 - [jokopoppo](https://github.com/jokopoppo) (Wachirawit Kanpanluk - wachirawit.k@inspex.co)
