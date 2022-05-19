@@ -2,7 +2,7 @@
 
 * [Smart Contract Security Testing Guide](README.md)
 
-## Testing Items
+## Testing Categories
 
 * [1. Architecture and Design](testing-items/1-architecture-and-design.md)
 * [2. Access Control](testing-items/2-access-control.md)
