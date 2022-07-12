@@ -10,7 +10,7 @@ Access control is the imposing of policy by preventing users from acting beyond 
 
 Check if there’s any function that invokes the `selfdestruct` instruction, and if there is, make sure that the function can only be called by the authorized parties only under necessary circumstances
 
-This can be done by searching for all functions with `selfdestruct` or `suicide` opetion in the contract, and check the access control for the function, if unauthorized actors can execute the function, it is vulnerable, for example:
+This can be done by searching for all functions with `selfdestruct` or `suicide` option in the contract, and check the access control for the function, if unauthorized actors can execute the function, it is vulnerable, for example:
 
 ```solidity
 contract Storage {
