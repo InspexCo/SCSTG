@@ -225,3 +225,63 @@ contract Treasury {
     receive() external payable {}
 }
 ```
+
+## 2.7. Signature verification must contain all necessary data and have protection against signature replay attack
+
+The Ethereum signed message can be used to authorize a user without creating a transaction on the blockchain. However, when using signature verification as an authorization method, the signed message must include all necessary data according to the authorization context. Furthermore, if a signed message is designed to be used only once, the signature replay attack protection mechanism must be implemented.
+
+**Testing:**
+
+The following `NFTMarketplace` contract has a `_verifySignature()` function to verify the signature when the user executes `buy()` function. The seller must sign the message first, and then the buyer will supply the signature and the signer as inputs when calling `buy()` function. However, this implementation is vulnerable to a signature replay attack and also lacks necessary data that should be in the signed message, such as order type and expiration time.
+
+```solidity
+contract NFTMarketplace {
+    // NFTMarketplace contract logic
+
+    function _verifySignature(address _nftAddress, uint256 _tokenId, uint256 _price, bytes memory _signature, address _signer) internal pure returns(bool) {
+        bytes32 messageHash = keccak256(abi.encodePacked(_nftAddress, _tokenId, _price));
+        bytes32 signedMessageHash = getEthSignedMessageHash(messageHash);
+        return recoverSigner(signedMessageHash, _signature) == _signer;
+    }
+
+    function buy(address _nftAddress, uint256 _tokenId, uint256 _price, bytes memory _signature, address _signer) external {
+        require(_verifySignature(_nftAddress, _tokenId, _price, _signature, _signer));
+        
+        // buy function logic
+    }
+
+    // NFTMarketplace contract logic
+}
+```
+
+From the example above, since it lacks an order type in the signed message, the attacker can use the signed message of the seller in both buy and sell. The signed message is also valid forever because there is no expiration check. The valid signature can also be used multiple times.
+
+**Solution:**
+
+Adding `_isSell` and `_expiry` to the message when signing it and validating it in the `buy()` function should prevent the attacker from abusing the order type and permanent validity of the signature. To prevent the signature replay attack, add the `_nonce` to the message and mark the signature as used with the `usedSignature` mapping state.
+
+Additionally, adding `address(this)` to the message can prevent the cross-contract signature replay attack, and adding `block.chainid` to the message can prevent the cross-chain signature replay attack. Furthermore, the EIP712 can be used to improve the readability of the signed message. The `EIP712Domain` also includes the platform name, version, verifying contract address, and chain ID, which is enough to protect against cross-contract and cross-chain signature replay attacks.
+
+```solidity
+contract NFTMarketplace {
+    // NFTMarketplace contract logic
+
+    function _verifySignature(address _nftAddress, uint256 _tokenId, uint256 _price, bool _isSell, uint256 _expiry, uint256 _nonce, bytes memory _signature, address _signer) internal view returns(bool) {
+        bytes32 messageHash = keccak256(abi.encodePacked(_nftAddress, _tokenId, _price, _isSell, _expiry, _nonce, address(this), block.chainid));
+        bytes32 signedMessageHash = getEthSignedMessageHash(messageHash);
+        return recoverSigner(signedMessageHash, _signature) == _signer;
+    }
+
+    function buy(address _nftAddress, uint256 _tokenId, uint256 _price, bool _isSell, uint256 _expiry, uint256 _nonce, bytes memory _signature, address _signer) external payable {
+        require(_isSell);
+        require(_expiry >  block.number);
+        require(!usedSignature[_signature]);
+        require(_verifySignature(_nftAddress, _tokenId, _price, _isSell, _expiry, _nonce, _signature, _signer));
+        usedSignature[_signature] = true;
+        
+        // buy function logic
+    }
+
+    // NFTMarketplace contract logic
+}
+```
