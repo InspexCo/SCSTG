@@ -32,7 +32,7 @@ Price oracle can be implemented by fetching the real-time on-chain data from a d
 
 Check that the price data used is not a spot price which can be easily manipulated.
 
-The use of spot price can be found by searching for the use of reserves to calculate the price. This includes the use of the `getAmontOut()` function.
+The use of spot price can be found by searching for the use of reserves to calculate the price. This includes the use of the `getAmountOut()` function.
 
 ```solidity
 function getPrice() external returns (uint256) {
