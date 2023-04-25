@@ -198,3 +198,84 @@ function withdraw(uint256 amount) external {
     require(success);
 }
 ```
+
+## 9.7. Invoke function with "this" keyword should be used with caution
+
+The `this` keyword in Solidity is used to retrieve the properties of the current smart contract address. When using `this` to invoke a function (`this.<functionName>`) in the smart contract, the `msg.sender` will be the smart contract itself, not the EOA.
+
+**Testing:**
+
+Check for the use of `this.<functionName>` statement that affects the logic of the use of `msg.sender`, and make sure that it is correct according to the business design.
+
+For example:
+
+```solidity
+pragma solidity ^0.8.0;
+import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import "@openzeppelin/contracts/token/ERC721/IERC721.sol";
+
+contract SimpleNFTMarketplace {
+    uint256 public offerIdCounter;
+    mapping(uint256 => Offer) public idToOffer;
+    enum Status {
+        NONE,
+        CREATED,
+        CANCELED,
+        SWAPPED
+    }
+    struct Offer {
+        address owner;
+        IERC721 sellToken;
+        uint256 sellId;
+        IERC20 buyToken;
+        uint256 buyAmount;
+        Status status;
+    }
+    // deposit nft
+    function offer(IERC721 sellToken, uint256 sellId, IERC20 buyToken, uint256 buyAmount) public {
+        Offer memory offer = Offer(
+            msg.sender,
+            sellToken,
+            sellId,
+            buyToken,
+            buyAmount,
+            Status.CREATED
+        );
+        idToOffer[++offerIdCounter] = offer;
+        IERC721(sellToken).transferFrom(msg.sender, address(this), sellId);
+    }
+   
+    // sell multiple nft at once
+    function bulkOffer(IERC721[] calldata sellTokens, uint256[] calldata sellIds, IERC20[] calldata buyTokens, uint256[] calldata buyAmounts) public {
+        for (uint256 i = 0; i < sellTokens.length; ++i) {
+            this.offer(sellTokens[i], sellIds[i], buyTokens[i], buyAmounts[i]);
+        }
+    }
+
+    // accept offer
+    function buy(uint256 offerId) public {
+        Offer storage offer = idToOffer[offerId];
+        require(offer.status == Status.CREATED, "invalid status");
+        offer.status = Status.SWAPPED;
+        IERC20(offer.buyToken).transferFrom(msg.sender, offer.owner, offer.buyAmount);
+        IERC721(offer.sellToken).transferFrom(address(this), msg.sender, offer.sellId);
+    }
+}
+```
+
+The `offer()` function allows users to offer NFTs for sale through the `buy()` function, and the `bulkOffer()` function allows users to offer multiple NFTs for sale in a single transaction. The owner of the offered NFTs will be `msg.sender`. However, because the `bulkOffer()` function applies `this.offer()`, the caller will be the contract address rather than an EOA. This means that an attacker could steal NFTs from the contract by calling the `bulkOffer()` function with existing NFTs in the contract, along with a worthless token, and then executing the `buy()` function to acquire those NFTs.
+
+**Solution:**
+
+If the required caller is not the contract address (`address(this)`), using `this` to invoke the function in the smart contract should be avoided.
+
+For example:
+
+```solidity=
+    // sell multiple nft at once
+    function bulkOffer(IERC721[] calldata sellTokens, uint256[] calldata sellIds, IERC20[] calldata buyTokens, uint256[] calldata buyAmounts) public {
+        for (uint256 i = 0; i < sellTokens.length; ++i) {
+            offer(sellTokens[i], sellIds[i], buyTokens[i], buyAmounts[i]);
+        }
+    }
+```
