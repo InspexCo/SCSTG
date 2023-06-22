@@ -148,8 +148,9 @@ For example, the source code above can be modified to comply with the “Checks-
 ```solidity
 function withdrawAll() external {
     require(balance[msg.sender] >= 0,'Insufficient funds'); // checks
+    uint256 amount = balance[msg.sender];
     balance[msg.sender] = 0; // effects
-    payable(msg.sender).call{value: balance[msg.sender]}(""); // interactions
+    payable(msg.sender).call{value: amount}(""); // interactions
 }
 ```
 
