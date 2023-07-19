@@ -1,184 +1,72 @@
-# 5. Blockchain Data
+# 5. Testing Control Flow
 
-The usage of data on the blockchain, including the storage, retrieval, and modification, should be done properly to keep the integrity, and sometimes confidentiality, of the data.
+A normal EVM blockchain transaction can only call one function at the receiver address, and the executions will be determined by the code stored in the address. The outcome of each function depends on the input (the user’s input parameters and the world states); if the contract blindly trusts the user’s parameters, the user could manipulate the execution flow.
 
-## 5.1. Result from random value generation should not be predictable
+## 5.1. Reentrancy
 
-Randomness on most blockchains is pseudo-random using a deterministic algorithm. Without a secure source of entropy, the result of an improperly implemented on-chain randomness can be predicted.
+If the contract has an external call (we usually call this as callback) to an address that the user can control, the user could call this function again or other functions in the execution flow (re-entrant). This could cause a problem if the contract does not expect their states to be changed while calling an external address. A state check can be done after the call to guarantee the invariance of the contract or by applying check-effect interactions.
 
-**Testing:**
+**Testing**
 
-Check that the result of the random function cannot be manipulated or predicted. If the block properties (`block.number`, `block.timestamp`, etc.) are used as the source of randomness or seed, the random result will be predictable.
+**5.1.1 Reentrant calling should not negatively affect the contract states**
 
-For example, the following code snippet shows a commonly found method of randomization using the block hash of the last block. Anyone can fetches the value of the block hash and know the result of the randomization, giving advantages to those who know this value.
+Reentrancy can happen when an external contract is invoked, allowing that contract to control the execution flow and perform reentrant calls. If the states are not completely updated or resolved, reentrancy can affect the invariant of the states.
+
+The test can be done by checking the following condition:
+
+* Check that external calling is not done to unknown contracts
+* Check that measures are implemented to prevent reentrancy
+* Check that there are invariant validation after the reentrant
+
+For example, the `withdrawAll()` function has a reentrancy issue because it gives the external call to the user (`msg.sender`), and the state is updated (`balance[msg.sender] = 0`) after the external call.
 
 ```solidity
-function random(uint256 range) internal view returns (uint256) {
-    return uint256(keccak256(abi.encodePacked(blockhash(block.number-1)))) % range;
-}
+function withdrawAll() external {
+    require(balance[msg.sender] >= 0,'Insufficient funds');
+    payable(msg.sender).call{value: balance[msg.sender]}("");
+    balance[msg.sender] = 0;
+}i
 ```
 
-**Solution:**
+When the `call()` function is executed, if the `fallback()` function is implemented on the `msg.sender` address, the fallback function will be called before the `balance[msg.sender]` is set to `0`. This can be used for reentrant calls to the `withdrawAll()` function for draining all tokens in the contract.
 
-1. Implement a provably-fair and verifiable source of randomness, e.g., verifiable random function (VRF); or
-2. Use an existing oracle service provider for source of randomness, such as [Chainlink VRF](https://docs.chain.link/docs/chainlink-vrf/); or
-3. Use a commit-reveal scheme for randomness seed to prevent any party from knowing the result prior to the reveal, for example: [https://fravoll.github.io/solidity-patterns/randomness.html](https://fravoll.github.io/solidity-patterns/randomness.html)
+### 5.2. Input validation
 
-## 5.2. Spot price should not be used as a data source for price oracles
+The parameters of a function are the parts over which the user has control. The result of the function would normally depend on the input parameters. If the user can craft input parameters to the function that do not properly handle the parameter, e.g., a zero value, a negative value, or a blank array, the user could break an invariant of the contract.
 
-Price oracle can be implemented by fetching the real-time on-chain data from a decentralized exchange contract. However, the spot price can easily be manipulated; therefore, the price fetched from the oracle can be manipulated by a malicious actor. This is especially impactful when combined with flash loans.
+**Testing**
 
-**Testing:**
+**5.2.1. Lack of input validation**
 
-Check that the price data used is not a spot price which can be easily manipulated.
+If the function can only operate within some range of input, the contract should always validate the user input, which could invalidate the platform's invariants.
 
-The use of spot price can be found by searching for the use of reserves to calculate the price. This includes the use of the `getAmontOut()` function.
+For example, the function below can deposit multiple tokens in one execution, and the caller will get a free gift from the contract. But the user can send a blank array as the input to bypass the depositing and get the gift freely.
 
 ```solidity
-function getPrice() external returns (uint256) {
-    (uint256 reserve0, uint256 reserve1) = pair.getReserves();
-    return reserve0 * PRECISION / reserve1;
-}
-```
-
-**Solution:**
-
-1. Use a time-weighted average price feed (Please note that this method does not work for low liquidity assets); or
-2. Use external trusted decentralized price oracles
-
-## 5.3. Timestamp should not be used to execute critical functions
-
-In Geth and Parity Ethereum protocol implementation, the miner can manipulate the timestamp to be anywhere within 15 seconds of the block being validated. This allows the miner to precompute and use the timestamp that is the most favorable for the miner.
-
-**Testing:**
-
-Check that timestamp is not used to perform decisions in executing critical functions, unless the scale of the time-dependent event can vary by 15 seconds and maintain integrity.
-
-Take a look at the following example contract:
-
-```solidity
-contract Roulette {
-    uint public pastBlockTime;
-
-    constructor() payable {}
-
-    function spin() external payable {
-        require(msg.value == 10 ether); // must send 10 ether to play
-        require(block.timestamp != pastBlockTime); // only 1 transaction per block
-
-        pastBlockTime = block.timestamp;
-
-        if (block.timestamp % 15 == 0) {
-            (bool sent, ) = msg.sender.call{value: address(this).balance}("");
-            require(sent, "Failed to send Ether");
+contract Gift {
+    struct TokenData {
+        address token,
+        uint256 amount
+    } 
+    mapping(address => uint256) public totalValue;
+  
+    function participate(TokenData[] memory tokens) external {
+        require(totalValue[msg.sender] == 0, "Each user can only participate once");
+    
+        for(uint256 i; i<tokens[i]; i++) {
+            require(_isValidToken(tokens[i].token));  // only the whitelist tokens are allowed
+            uint256 value = _calculateValue(tokens[i].token, tokens[i].amount); // get the token in $USD
+            require(value > 100 ether, "Each deposit must worth more than $100.")
+            IERC20(tokens[i].token).transferFrom(msg.sender, tokens[i].amount);
+            totalValue[msg.sender] += value;
         }
+        // A gift for every participant
+        sendGift(msg.sender);
     }
 }
 ```
 
-From the Roulette contract above, the miner can manipulate the timestamp to be divisible by 15 and mine that block to win the reward.
+## Checklist
 
-**Solution:**
-
-Avoid using `block.timestamp`, or redesign the contract to remove the sensitive time-dependent event.
-
-## 5.4. Plain sensitive data should not be stored on-chain
-
-Data stored on the blockchain can be publicly viewed, so confidential data should not be submitted or stored on-chain. This is also true even for the states that have `private` visibility, since anyone can get the value by directly accessing the storage slot of the contract.
-
-**Testing:**
-
-Check that no sensitive data is designed to be stored on-chain, even with private state visibility.
-
-```solidity
-contract PrivateVault {
-    bytes32 private secret;
-
-    constructor(bytes32 _secret) {
-        secret = _secret;
-    }
-
-    function withdraw(uint256 amount, bytes32 _secret) external {
-        require(_secret == secret, "Incorrect secret");
-        (bool success, ) = msg.sender.call{value: amount}("");
-        require(success, "Withdraw failed");
-    }
-}
-```
-
-**Solution:**
-
-1. Avoid storing private data on-chain; or
-2. If privacy is required only for a specific period of time, use a commitment scheme
-
-## 5.5. Modification of array state should not be done by value
-
-Array state can be passed into a function by reference or by value, using the `storage` or `memory` keywords respectively. If the state is aimed to be modified, it should not be passed by value.
-
-**Testing:**
-
-Check for state modification of array that is passed by value.
-
-Take a look at the following example contract:
-
-```solidity
-contract Memory {
-    uint[1] public array;
-
-    function set() public {
-        setStorage(array); // update array
-        setMemory(array); // do not update array
-    }
-
-    function setStorage(uint[1] storage arr) internal { // by reference
-        arr[0] = 100;
-    }
-
-    function setMemory(uint[1] memory arr) internal { // by value
-        arr[0] = 200;
-    }
-}
-```
-
-From the contract above, if the `set()` function is called, the value of `array[0]` state will be set to 100, instead of 200, since the `setMemory()` function accepts value as a parameter, not the reference to the storage slot.
-
-**Solution:**
-
-Modify the array state by passing the parameter by reference using the `storage` keyword.
-
-## 5.6. State variable should not be used without being initialized
-
-The default value of an uninitialized state is 0, or 0x0. If the state is not intended to be zero, the use of that state without initialization can cause unintended effects.
-
-**Testing:**
-
-Check for the non-zero states that are used in the contract without being initialized.
-
-Take a look at the following example contract:
-
-```solidity
-contract Uninitialized{
-    address payable treasury;
-    address owner;
-
-    constructor() {
-        owner = msg.sender;
-    }
-
-    function setTreasury(address payable _treasury) external {
-        require(msg.sender == owner, "Only owner can set treasury");
-        treasury = _treasury;
-    }
-
-    function transferToTreasury() payable public {
-        (bool success, ) = treasury.call{value: address(this).balance}("");
-        require(success, "Transfer to treasury failed");
-    }
-}
-```
-
-In the contract above, it is possible for the `transferToTreasury()` function to be executed prior to the `setTreasury()` function. With the `treasury` state uninitialized, the fund will be transferred to the zero address and lost forever.
-
-**Solution:**
-
-Initialize all state variables with their intended value on their declarations or contract construction.
+* Reentrant calling should not invalidate the platform's invariants
+* The function inputs should always be validated

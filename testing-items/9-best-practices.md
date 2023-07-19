@@ -1,281 +1,129 @@
-# 9. Best Practices
+# 9. Testing Contract Upgradability
 
-Smart contract can be implemented in various ways, depending on each developer’s style. However, complying with the best practices can improve the code quality of the smart contract, making it cleaner, more readable, or more efficient.
+Smart contracts on multiple blockchains can be upgraded or designed to be upgraded. Modifications to contract logic can help resolve newly discovered issues. Nevertheless, upgradability without any restrictions opens up room for the holders of privileged accounts to insert malicious logic into the smart contract. Furthermore, the upgrade pattern increases the complexity of the code and may introduce new bugs to the smart contract.
 
-## 9.1. State and function visibility should be explicitly labeled
+## **9.1. Identify an upgradability in contract**
 
-State variables and functions have the default visibility assigned to them. The default visibility for state variables is internal, while the default visibility for functions is public. Labeling the visibility explicitly allows easy identification of the access scope.
+There are several forms of upgradeability. But in general, there are two instructions that provide some degree of upgradability in EVM: `delegatecall` and `selfdestruct`. A proxy contract is a common form of upgradable contract. It consists of the proxy part and the implementation part. They are usually separate contracts, but they are not necessary. A proxy contract simply relies on the `delegatecall` instruction to call the implementation contract. We could use this as criteria for an upgradeable contract. But, for the implementation contract, there is no concrete criteria to judge whether the contract is the implementation contract or not. A lesser known usecase of the `selfdestruct` instruction is for upgrading a contract. It is possible to deploy a different contract to the same address by using the `selfdestruct` instruction.
 
-**Testing:**
+**Testing**
 
-Check that all state variables and functions have explicit visibility.
+Smart contracts on multiple blockchains can be upgraded, or designed to be upgradable. Modifications of contract logic can help in resolving newly found issues. Nevertheless, upgradability without any restrictions opens up room for the holders of privileged accounts to insert malicious logic into the smart contract. Furthermore, the upgrade pattern increases the complexity of the code and may introduce new bugs to the smart contract.
 
-This can be done by looking at the declaration of each state and function, making sure that they have visibility stated, for example:
+**9.1.1. Identify a `delegatecall` instruction that could lead to the contract upgradability**
+
+The `delegatecall` instruction can change the contract states with an external contract's logic.
+
+The test can be done by checking the `delegatecall` instructions in the contract. The target address of the `delegatecall` instruction must not be an arbitrarily untrusted contract.
+
+For example, the function below relies on the implementation of the `transfer()` function on the `masterToken` address. Though the target function must be named `transfer`, but the user can implement any logic on it. Instead of transferring token logic, it can increase the balance of the caller.
 
 ```solidity
-contract Visibility {
-    uint256 state;
-
-    function setState(uint256 newState) {
-        state = newState;
-    }
-
-    function getState() view returns (uint256) {
-        return state;
-    }
-
+function transfer(address masterToken, address to, uint256 amount) external {
+    (bool success, ) = masterToken.delegatecall(
+        abi.encodeWithSignature("transfer(address,uint256)", to, amount)
+    );
+    
+    require(success, "Delegatecall failed");
 }
 ```
 
-**Solution:**
+**9.1.2. Identify a `selfdestruct` instruction that could lead to the contract upgradability**
 
-Explicitly label the visibility of the state variables and functions.
+The `selfdestruct` instruction can remove the code from the contract. It could be used to steal all the funds in the contract. Moreover, in special cases, the `selfdestruct` insturction can be used to upgrade the contract logic.
+
+The test can be done by checking the `selfdestruct` instruction in the contract. The contract should not have the `selfdestruct` instruction.
+
+For example, the function below has the `selfdestruct` instruction. After the contract is self-destructed, it is possible to redeploy the new logic to the same address with some technique, resulting in the contract upgrade.
 
 ```solidity
-contract Visibility {
-    uint256 private state;
-
-    function setState(uint256 newState) external {
-        state = newState;
-    }
-
-    function getState() view external returns (uint256) {
-        return state;
-    }
+function emergencyWithdraw() external {
+    require(owner == msg.sender);
+    selfdestruct(payable(msg.sender));
 }
 ```
 
-## 9.2. Token implementation should comply with the standard specification
+## **9.2. The initialize function implementation**
 
-Implementation of tokens can be freely done; however, to make them compatible with other smart contracts, standard specifications such as ERC20 for fungible tokens, or ERC721 for non-fungible tokens should be followed.
+Most of the upgradeable contracts have a special function commonly called an initialize function. It is a function for initializing important state variables. Since most of the upgradable contracts cannot rely on the constructor to do the same tasks due to the scheme of the upgradable design that the developer chose, The initialize function can compensate for the lack of constructor execution. The initialize function is an important function that can alter critical states of the contract.
 
-**Testing:**
+**Testing**
 
-Check that the token implementation fully complies with the specifications of the selected standard.
+**9.2.1. The initialize function could only be executed once by the authorized party**
 
-The specifications for ERC20 can be found at: [https://eips.ethereum.org/EIPS/eip-20#specification](https://eips.ethereum.org/EIPS/eip-20#specification)
-
-The specifications for ERC721 can be found at: [https://eips.ethereum.org/EIPS/eip-721#specification](https://eips.ethereum.org/EIPS/eip-721#specification)
-
-For ERC20, the following slither script by tinchoabbate can be used: [https://github.com/tinchoabbate/slither-scripts/tree/master/erc20](https://github.com/tinchoabbate/slither-scripts/tree/master/erc20)
-
-**Solution:**
-
-Modify the smart contract to comply with the standard specifications.
-
-As an example, the ERC20 or ERC721 contracts can be implemented by inheriting [OpenZeppelin's implementation](https://github.com/OpenZeppelin/openzeppelin-contracts/tree/master/contracts/token).
-## 9.3. Floating pragma version should not be used
-
-Smart contract compiler version can be specified using a floating pragma version; however, that may allow the contract to be compiled with other compiler versions than the one intended by the authors.
-
-**Testing:**
-
-Check that the compiler version is locked to one specific version.
-
-This can be done by looking at the pragma solidity flag at the top of the contract source code file. Only one specific version should be used, not multiple, for example:
+The initial states of a smart contract can be initialized through the constructor or a special function designed for initialization. Initialization is required for the contracts that are using the proxy pattern, as the constructor cannot be used. It is important that the initialization be done only once by the authorized account to prevent the contract states from being overwritten. The test can be done by checking that the initialization function can be used only once, and only by the authorized party. The example Solidity code has the initialize() function that can set the owner state without any access control.
 
 ```solidity
-// SPDX-License-Identifier: MIT
+contract Initialize {
+    address public owner;
 
-pragma solidity >=0.4.0 < 0.6.0;
-pragma solidity >=0.4.0<0.6.0;
-pragma solidity >=0.4.14 <0.6.0;
-pragma solidity >0.4.13 <0.6.0;
-pragma solidity 0.4.24 - 0.5.2;
-pragma solidity >=0.4.24 <=0.5.3 ~0.4.20;
-pragma solidity <0.4.26;
-pragma solidity ~0.4.20;
-pragma solidity ^0.4.14;
-pragma solidity 0.4.*;
-pragma solidity 0.*;
-pragma solidity *;
-pragma solidity 0.4;
-pragma solidity 0;
-```
-
-**Solution:**
-
-Change the compiler version flag to one fixed version.
-
-For example:
-
-```solidity
-// SPDX-License-Identifier: MIT
-
-pragma solidity 0.8.13;
-// or
-pragma solidity =0.8.13;
-```
-
-## 9.4. Builtin symbols should not be shadowed
-
-In Solidity, multiple variables and functions are builtin, providing information about the blockchain general-use utility functions. However, those variables and functions can be overwritten by states, variables, functions, modifiers, or events with the same name, which is also known as shadowing. The shadowing of the builtin symbols can cause unintended consequences when they are used.
-
-The list of the builtin variables and functions can be found here: [https://docs.soliditylang.org/en/latest/units-and-global-variables.html#special-variables-and-functions](https://docs.soliditylang.org/en/latest/units-and-global-variables.html#special-variables-and-functions)
-
-**Testing:**
-
-Check that there is no shadowing of the builtin symbols in the smart contract.
-
-```solidity
-contract FakeBuiltin {
-    uint256 public now;
-
-    function blockhash(uint blocknumber) public returns (bytes32) {
-        return keccak256(abi.encodePacked(blocknumber));
-    }
-}
-
-contract Shadow is FakeBuiltin {
-    function fakeNextPeriod() public view returns (uint256) {
-        return now + 86400;
+    function initialize() external {
+        owner = msg.sender;
     }
 
-    function fakeLastBlockhash() public returns (bytes32) {
-        return blockhash(block.number - 1);
+    function withdraw(address to, uint256 amount) external {
+        require(msg.sender == owner, "Only the owner can withdraw");
+        (bool success, ) = to.call{value: amount}("");
+        require(success, "Transfer failed");
     }
 }
 ```
 
-**Solution:**
+## **9.3 Upgradable proxy contract pitfalls**
 
-Rename the symbol to avoid shadowing.
+An upgradable proxy pattern mainly has a proxy contract to store the state data and do execution on the implementation contract. The data in EVM is stored in a slot pattern that can store 32 bytes of data in each slot. The same data from the same storage slot on a proxy contract can represent different information depending on the implementation contract that the proxy contract refers to. A problem may arise when a proxy contract uses the 'delegatecall' to access a different implementation contract that accesses the storage slot in a different context.
 
-## 9.5. Functions that are never called internally should not have public visibility
+**Testing**
 
-Public functions with reference type parameters copy calldata to memory when being executed, while external functions can read directly from calldata. Memory allocation uses more resources (gas) than reading directly from calldata. Therefore, public functions that are never called internally by the contract itself should have external visibility. Furthermore, this improves the readability of the contract, allowing clear distinction between functions that are externally used and functions that are also called internally.
+**9.3.1. Storage slot allocation should not conflict**
 
-Please note that the increase of gas usage is no longer applicable to smart contracts compiled with Solidity version 0.6.9 and later, as the data location keywords are required to be chosen and specified explicitly for reference type parameters regardless of the function visibility.
+A proxy contract relies on the `delegatecall` instruction to use logic from another contract to modify its own states. If the proxy contract uses the `delegatecall` instruction to call another contract that is not designed to support the call of a proxy contract, the states on the proxy contract could collide and the execution can yield an unexpected result.
 
-**Testing:**
-
-Check for public functions that are never called internally from the contract itself.
+For example, in the pair of the implementation contract and the proxy contract below, the proxy contract uses the storage on slot 0 and 1. The implementation contract also uses storage slot number 0. When the proxy contract calls the `initialize()` function to set the `owner` state, they will notice that the execution is reverted because storage slot 0 of the proxy contract has already stored the address of the implementation contract. Thus, the check `owner == address(0)` will not pass.
 
 ```solidity
-contract PublicExternal {
-    function multiply(uint256[2] inputs) public returns (uint256) {
-         return inputs[0] * inputs[1];
+contract ImplementationA {
+    address owner; // slot 0
+    
+    function initialize() external {
+        require(owner == address(0)); // read from the storage slot 0
+        owner = msg.sender; // edit the storage slot 0
     }
+    function emergencyWithdraw() external {
+        require(owner == msg.sender);
+        payable(msg.sender).call{value: address(this).balance}();
+    }
+    ...
 }
-```
 
-**Solution:**
-
-Set the visibility of the public functions that are never called internally by the contract to external.
-
-## 9.6. Assert statement should not be used for validating common conditions
-
-The `assert()` statement is an overly assertive checking that drains all gas in the transaction when triggered. A properly functioning smart contract should **never** reach a failing assert statement. Instead, the `require()` statement should be used to validate that the conditions are met, or to validate return values from external contract callings.
-
-**Testing:**
-
-Check for the use of `assert()` statement, and make sure that it is a check for invariant, not a common condition validation.
-
-Take a look at the following example function:
-
-```solidity
-function withdraw(uint256 amount) external {
-    assert(balances[msg.sender] >= amount);
-    balances[msg.sender] -= amount;
-    (bool success, ) = msg.sender.call{value: amount}("");
-    assert(success);
-}
-```
-
-The function validates that the caller has enough balance and the transfer is successful, which are the conditions required for the user to withdraw. However, since `assert()` is improperly used here, anyone calling the function without sufficient balance will have their gas used to the limit of the transaction instead of having their leftover gas returned.
-
-**Solution:**
-
-Replace the `assert()` statement with `require()` statement if the condition checked is not an invariant or a condition that should be impossible to be reached.
-
-For example:
-
-```solidity
-function withdraw(uint256 amount) external {
-    require(balances[msg.sender] >= amount);
-    balances[msg.sender] -= amount;
-    (bool success, ) = msg.sender.call{value: amount}("");
-    require(success);
-}
-```
-
-## 9.7. Invoke function with "this" keyword should be used with caution
-
-The `this` keyword in Solidity is used to retrieve the properties of the current smart contract address. When using `this` to invoke a function (`this.<functionName>`) in the smart contract, the `msg.sender` will be the smart contract itself, not the EOA.
-
-**Testing:**
-
-Check for the use of `this.<functionName>` statement that affects the logic of the use of `msg.sender`, and make sure that it is correct according to the business design.
-
-For example:
-
-```solidity
-pragma solidity ^0.8.0;
-import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
-import "@openzeppelin/contracts/token/ERC721/IERC721.sol";
-
-contract SimpleNFTMarketplace {
-    uint256 public offerIdCounter;
-    mapping(uint256 => Offer) public idToOffer;
-    enum Status {
-        NONE,
-        CREATED,
-        CANCELED,
-        SWAPPED
+contract SimpleProxy {
+    address implementation; // slot 0
+    address owner;          // slot 1
+    
+    constructor(address _implementation){
+        implementation = _implementation;
+        owner = msg.sender;
     }
-    struct Offer {
-        address owner;
-        IERC721 sellToken;
-        uint256 sellId;
-        IERC20 buyToken;
-        uint256 buyAmount;
-        Status status;
+    
+    function changeImplementation(address newImplementation) external {
+        require(owner == msg.sender);
+        implementation = newImplementation; // edit the storage slot 0
     }
-    // deposit nft
-    function offer(IERC721 sellToken, uint256 sellId, IERC20 buyToken, uint256 buyAmount) public {
-        Offer memory offer = Offer(
-            msg.sender,
-            sellToken,
-            sellId,
-            buyToken,
-            buyAmount,
-            Status.CREATED
-        );
-        idToOffer[++offerIdCounter] = offer;
-        IERC721(sellToken).transferFrom(msg.sender, address(this), sellId);
-    }
-   
-    // sell multiple nft at once
-    function bulkOffer(IERC721[] calldata sellTokens, uint256[] calldata sellIds, IERC20[] calldata buyTokens, uint256[] calldata buyAmounts) public {
-        for (uint256 i = 0; i < sellTokens.length; ++i) {
-            this.offer(sellTokens[i], sellIds[i], buyTokens[i], buyAmounts[i]);
+    
+    fallback() external payable() {
+       assembly {
+            calldatacopy(0, 0, calldatasize())
+            let result := delegatecall(gas(), implementation, 0, calldatasize(), 0, 0)
+            returndatacopy(0, 0, returndatasize())
+
+            switch result
+            case 0 {
+                revert(0, returndatasize())
+            }
+            default {
+                return(0, returndatasize())
+            }
         }
     }
-
-    // accept offer
-    function buy(uint256 offerId) public {
-        Offer storage offer = idToOffer[offerId];
-        require(offer.status == Status.CREATED, "invalid status");
-        offer.status = Status.SWAPPED;
-        IERC20(offer.buyToken).transferFrom(msg.sender, offer.owner, offer.buyAmount);
-        IERC721(offer.sellToken).transferFrom(address(this), msg.sender, offer.sellId);
-    }
 }
-```
-
-The `offer()` function allows users to offer NFTs for sale through the `buy()` function, and the `bulkOffer()` function allows users to offer multiple NFTs for sale in a single transaction. The owner of the offered NFTs will be `msg.sender`. However, because the `bulkOffer()` function applies `this.offer()`, the caller will be the contract address rather than an EOA. This means that an attacker could steal NFTs from the contract by calling the `bulkOffer()` function with existing NFTs in the contract, along with a worthless token, and then executing the `buy()` function to acquire those NFTs.
-
-**Solution:**
-
-If the required caller is not the contract address (`address(this)`), using `this` to invoke the function in the smart contract should be avoided.
-
-For example:
-
-```solidity=
-    // sell multiple nft at once
-    function bulkOffer(IERC721[] calldata sellTokens, uint256[] calldata sellIds, IERC20[] calldata buyTokens, uint256[] calldata buyAmounts) public {
-        for (uint256 i = 0; i < sellTokens.length; ++i) {
-            offer(sellTokens[i], sellIds[i], buyTokens[i], buyAmounts[i]);
-        }
-    }
 ```

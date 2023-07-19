@@ -1,201 +1,172 @@
-# 6. External Components
+# 6. Testing Access Control
 
-Smart contracts can be interconnected through the inheritance of the previously developed smart contracts or the calling of functions from other contracts. Usage of insecure external components can cause undesirable or harmful effects.
+Access control is the imposing of policies by preventing users from acting beyond the scope of their authorized permissions. Improper access control can lead to unauthorized information disclosure, data manipulation or loss, or the performance of business functions outside the user's capability. Smart contracts can have access controls to enforce the proper behavior of the intended work flow. Access control comprises two main components: authentication and authorization. Authentication and authorization are important for the smart contract's security. Authentication is a process for verifying the identity of a user. In EVM, a user uses a key pair as an identity (a public key) and proves the identity with another key (a private key). Authorization is a control over the accessibility of each user to the smart contract's functions.
 
-## 6.1. Unknown external components should not be invoked
+## 6.1. Contract's authentication
 
-Invoking of external components or contract allows that contract to perform state modifying actions during the execution of our functions. If unknown components can be arbitrarily invoked, the changing of states can cause unpredictable results to the smart contract.
+In EVM, a user authenticates their transactions by using their private key. In a smart contract context, there are two special states that could be used as authentication: `tx.origin` and `msg.sender`. The `tx.origin` state is the address of the user who initiated the transaction, which will be the same throughout the whole transaction. The `msg.sender` state is the address of the immediate caller of the current external call, which can be changed every time an external call is made (a contract can also make an external call to itself).
 
-**Testing:**
+There are some cases where the contract supports a scheme that the contract executes the functions on behalf of the users. The contract has to make sure that the referred `msg.sender` address is the address of the users, not the contract itself.
 
-Check that only known and trusted contracts are invoked.
+**Testing**
 
-Please have a look at the following example vulnerable contract.
+**6.1.1. tx.origin should not be used for authentication**
+
+When `tx.origin` is used for authorization, it is possible for other contracts to call and perform actions using the permission of the transaction signer, which may not be intended.
+
+The test can be done by checking that `tx.origin` is not used for authorization.
+
+Take a look at the following example contract:
 
 ```solidity
-import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
-import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
+contract Treasury {
+    address public owner;
 
-interface IRouter {
-    function swapExactTokensForTokens(
-        uint amountIn,
-        uint amountOutMin,
-        address[] calldata path,
+    constructor() {
+        owner = tx.origin;
+    }
+
+    function withdrawTo(address to, uint256 amount) payable external {
+        require(tx.origin == owner, "Only the owner can use this function");
+        (bool success, ) = to.call{value: amount}("");
+        require(success, "Transfer failed");
+    }
+
+    receive() external payable {}
+}
+```
+
+By using `tx.origin` for the authorization, an attacker can create a malicious contract that calls the `Treasury.withdrawTo()` function. If the real owner executes a function in that malicious contract, the funds can be unknowingly transferred from the contract.
+
+**6.1.2. Authentication measures must be able to correctly identify the user**
+
+The authentication measure used should be able to identify the user correctly without allowing any malicious actor to bypass or act as another user and correctly obtain the user's identity.
+
+The test can be done by checking that the authentication cannot be bypassed, spoofed, or replayed by a malicious actor and can correctly obtain the user identity.
+
+For example, a function below is for obtaining the identity of the user on a contract that supports ERC2771, where the signed transaction will be relayed by the relayer, resulting in the change of `msg.sender`. Therefore, if the contract directly uses `msg.sender` instead of the `_msgSender()` function, the contract will work incorrectly in the case where the relayer executes the transaction on behalf of the user.
+
+```solidity
+function _msgSender() internal override virtual view returns (address ret) {
+    if (msg.data.length >= 20 && isTrustedForwarder(msg.sender)) {
+        // At this point we know that the sender is a trusted forwarder,
+        // so we trust that the last bytes of msg.data are the verified sender address.
+        // extract sender address from the end of msg.data
+        assembly {
+            ret := shr(96,calldataload(sub(calldatasize(),20)))
+        }
+    } else {
+        ret = msg.sender;
+    }
+}
+```
+
+## 6.2. Contract's authorization
+
+Using role-based access control is common in a smart contract. It offers a smart contract for simple yet effective access control. It can be used to protect critical functions that can change the contract's critical states from being accessed by an unauthorized party. Role-based access control is an authorization that defines roles and authorizes privilege users, allowing them to perform critical actions.
+
+**Testing**
+
+**6.2.1. The roles are well defined and enforced**
+
+Each function should have a list of eligible actors defined. Any other users outside of the roles defined should not be able to use the functions.
+
+The test can be done by checking that each function can be executed only by the roles defined.
+
+For example, the `claimAirdrop()` function should allow only the airdrop role to execute. In the following source code, there is no access control to ensure that function is executed by an eligible role or address from which anyone can claim the airdrop via the `claimAirdrop()` function.
+
+```solidity
+address airdropAddr = 0x0C0fFEEC0FfeeC0FFeec0FfeEC0FFeE000000000;
+
+function claimAirdrop() external {
+    // Claim Airdrop Code.
+}
+```
+
+**6.2.2. The roles can be safely transferred**
+
+When a contract has a function to transfer membership in a role to another address, the contract should have a mechanism to make sure that the new member is correctly transferred. If the membership is transferred to an invalid address, the lost membership cannot be re-gained, and no one will have access to functions that are associated with the role.
+
+The example below is a function that requires the admin's permission to execute. But when executed, the old admin will lose the admin's rights, and the new admin can be any address.
+
+```solidity
+function transferAdmin(address newAdmin) external {
+    require(msg.sender == admin);
+    
+    admin = newAdmin;
+}
+```
+
+**6.2.3. Least privilege principle should be used for the rights of each role**
+
+The least privilege principle should be applied to each role. The privilege of each role should be set only to do the task in their role. For example, the minter role should be allowed to mint the token only, and should not be allowed to do other actions.
+
+The test can be done by checking that the privilege of each role is applied to the principle of least privilege. The privileges of each role should allow them to perform only their required tasks.
+
+For example, the ERC-20 token was used as a reward token for the yield-farming contract. The `OWNER_ROLE` role was set to MasterChef's contract for minting rewards and the owner wallet to pause or unpause the token.
+
+```solidity
+contract ERC20PresetMinterPauser is Context, AccessControlEnumerable, ERC20Burnable, ERC20Pausable {
+    bytes32 public constant OWNER_ROLE = keccak256("OWNER_ROLE");
+
+    constructor(string memory name, string memory symbol) ERC20(name, symbol) {
+        _setupRole(DEFAULT_ADMIN_ROLE, _msgSender());
+        _setupRole(OWNER_ROLE, _msgSender());
+    }
+
+    function mint(address to, uint256 amount) public virtual {
+        require(hasRole(OWNER_ROLE, _msgSender()), "You must have owner role to mint");
+        _mint(to, amount);
+    }
+
+    function pause() public virtual {
+        require(hasRole(OWNER_ROLE, _msgSender()), "You must have owner role to pause");
+        _pause();
+    }
+
+    function unpause() public virtual {
+        require(hasRole(OWNER_ROLE, _msgSender()), "You must have owner role to unpause");
+        _unpause();
+    }
+
+    function _beforeTokenTransfer(
+        address from,
         address to,
-        uint deadline
-    ) external returns (uint[] memory amounts);
-}
-
-contract UnsafeVault {
-    using SafeERC20 for IERC20;
-    mapping(address => uint256) public balances;
-    IERC20 public token;
-
-    constructor(IERC20 _token) {
-        token = _token;
-    }
-
-    function swapAndDeposit(IRouter router, IERC20 srcToken, uint256 amount, uint256 amountOutMin) external {
-        srcToken.safeTransferFrom(msg.sender, address(this), amount);
-        address[] memory path;
-        path[0] = address(srcToken);
-        path[1] = address(token);
-        srcToken.safeIncreaseAllowance(address(router), amount);
-        uint256[] memory amounts = router.swapExactTokensForTokens(amount, amountOutMin, path, address(this), block.timestamp);
-        balances[msg.sender] += amounts[1];
-    }
-
-    function withdraw(uint256 amount) external {
-        balances[msg.sender] -= amount;
-        token.transfer(msg.sender, amount);
+        uint256 amount
+    ) internal virtual override(ERC20, ERC20Pausable) {
+        super._beforeTokenTransfer(from, to, amount);
     }
 }
 ```
 
-In the contract above, the router can be set to any contract, allowing the attacker to implement a malicious contract that returns high balance without actually swapping.
+The contract should ensure that each role is allowed to perform its required tasks only by separating the tasks for each role. For example, the minter role should only be allowed to mint the token and should not have the right to do other tasks, e.g., pause token transfer.
 
-**Solution:**
+## 6.3. Signature verification
 
-Perform external callings to only known and trusted smart contracts, or define a whitelist of trustable contracts.
+The keypair on the EVM is generated using elliptic curve cryptography. It consists of a public key and a private key. The address of each user is derived from their public key, and only the corresponding private key can sign the transaction for the address. In EVM, there is a special function that can recover the public key from a message that is signed by a corresponded private key. With this function, there is a functionality that allows the user to sign a message (not a transaction), and the signed messages can be used by another party to do things on the user's behalf.
 
-## 6.2. Funds should not be approved or transferred to unknown accounts
+**Testing**
 
-Funds approved or transferred to an unknown account can be pulled from the contract anytime by the target account. Funds should only be transferred or approved to accounts within the trusted scope.
+**6.3.1. The critical function should enforce an access control**
 
-**Testing:**
+The functions that can change critical states should not be accessible by anyone. It must have access control that allows only the suitably qualified party to access it, e.g., DAO governance.
 
-1. Check that funds are approved or transferred to the account that has rights for that fund
-2. Check that only the necessary amount of funds is approved for other accounts
-
-Please have a look at the following example vulnerable contract.
+For example, the function below is a function for configuring the oracle of the contract, but the function can be accessed by anyone. An attacker could use this function to set a malicious oracle of the contract, manipulating the asset price.
 
 ```solidity
-import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
-import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
-
-interface IRouter {
-    function swapExactTokensForTokens(
-        uint amountIn,
-        uint amountOutMin,
-        address[] calldata path,
-        address to,
-        uint deadline
-    ) external returns (uint[] memory amounts);
-}
-
-contract UnsafeVault2 {
-    using SafeERC20 for IERC20;
-    mapping(address => uint256) public balances;
-    IERC20 public token;
-
-    constructor(IERC20 _token) {
-        token = _token;
-    }
-
-    function swapAndDeposit(IRouter router, IERC20 srcToken, uint256 amount, uint256 amountOutMin) external {
-        srcToken.safeTransferFrom(msg.sender, address(this), amount);
-        address[] memory path;
-        path[0] = address(srcToken);
-        path[1] = address(token);
-        srcToken.approve(address(router), type(uint256).max);
-        uint256[] memory amounts = router.swapExactTokensForTokens(amount, amountOutMin, path, address(this), block.timestamp);
-        srcToken.approve(address(router), 0);
-        balances[msg.sender] += amounts[1];
-    }
-
-    function withdraw(uint256 amount) external {
-        balances[msg.sender] -= amount;
-        token.transfer(msg.sender, amount);
-    }
+function setOracle(address newOracle) external {
+    IOracle(newOracle).getPrice(); // sanity check
+    
+    oracle = newOracle;
 }
 ```
 
-In the contract above, the router can be set to any contract, allowing the attacker to implement a malicious contract and pass that contract as the `router` parameter. Since the maximum value of `uint256` is approved from the token transfer, which can also be controlled by the attacker, the attacker can drain all tokens in the contract.
+## Checklist
 
-**Solution:**
-
-1. Avoid approving or transferring funds to unknown accounts
-2. Set the approval amount to be only the necessary amount
-
-## 6.3. Reentrant calling should not negatively affect the contract states
-
-Reentrancy can happen when an external contract is invoked, allowing that contract to control the execution flow and perform reentrant calls. If the states are not completely updated or resolved, reentrancy can affect the integrity of the states.
-
-**Testing:**
-
-1. Check that external calling is not done to unknown contracts; or
-2. Check that measures are implemented to prevent reentrancy
-
-The following `withdrawAll()` function has a reentrancy issue on the external `call()` function which is used to transfer native tokens.
-
-```solidity
-function withdrawAll() external {
-    require(balance[msg.sender] >= 0,'Insufficient funds');
-    payable(msg.sender).call{value: balance[msg.sender]}("");
-    balance[msg.sender] = 0;
-}
-```
-
-When the `call()` function is executed, if the `fallback()` function is implemented on `msg.sender` address, the fallback function will be called before the `balance[msg.sender]` is set as 0. This can be used for reentrant calling to the `withdrawAll()` function for draining all tokens in the contract.
-
-**Solution:**
-
-1. Use the “Checks-Effects-Interactions” pattern to completely update the states before invoking external accounts or contracts; or
-2. Implement a mutex lock to prevent a reentrant calling to the same contract
-
-For example, the source code above can be modified to comply with the “Checks-Effects-Interactions” pattern as follows:
-
-```solidity
-function withdrawAll() external {
-    require(balance[msg.sender] >= 0,'Insufficient funds'); // checks
-    uint256 amount = balance[msg.sender];
-    balance[msg.sender] = 0; // effects
-    payable(msg.sender).call{value: amount}(""); // interactions
-}
-```
-
-## 6.4. Vulnerable or outdated components should not be used in the smart contract
-
-Smart contracts can use or inherit external components that have already implemented the desired functionalities. However, the use of outdated components can be harmful, as the latest patches, bug fixes, or features are missing from the outdated version.
-
-**Testing:**
-
-Check that all external components used are the latest stable versions.
-
-**Solution:**
-
-Make sure that the latest stable versions of external components are used.
-
-## 6.5. Deprecated components that have no longer been supported should not be used in the smart contract
-
-Smart contracts can use or inherit external components that have already implemented the desired functionalities. However, the use of unmaintained components can be harmful, as vulnerabilities for those components may be found and published without any bug fix being released, allowing attackers to use those flaws in attacking the smart contract.
-
-**Testing:**
-
-Check that external components are not deprecated or unmaintained.
-
-**Solution:**
-
-Avoid using the deprecated or unmaintained components.
-
-## 6.6. Delegatecall should not be used on untrusted contracts
-
-The delegatecall function can be used to execute the logic of other contracts with the states of the caller contract. If delegatecall can be used on untrusted contracts, a malicious user can implement a malicious function as the target of the delegatecall and perform any arbitrary actions on the caller contract.
-
-**Testing:**
-
-Check that delegatecall is only used on trusted contracts.
-
-```solidity
-contract Worker {
-    function work(address worker) external {
-        worker.delegatecall(bytes4(keccak256("work()")));
-    }
-}
-```
-
-In the example contract above, the delegatecall is used on a user supplied address, `worker`, allowing the attacker to create a contract with the `work()` function and perform arbitrary actions on the contract.
-
-**Solution:**
-
-Implement a whitelist of trusted contracts to be used for the delegatecall.
+* `tx.origin` should not be used for authentication
+* Authentication measures must be able to correctly identify the user
+* The roles' membership can be safely transferred
+* Least privilege principle should be used for the rights of each role
+* Access control should be defined and enforced for each actor roles
+* Access control must be able to transfer to other entities safely
+* The critical function should enforce an access control

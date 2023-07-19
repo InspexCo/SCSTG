@@ -1,287 +1,104 @@
-# 2. Access Control
+# 2. Testing Contract Compiling
 
-Access control is the imposing of policy by preventing users from acting beyond the scope of their authorized permissions. Improper access control can lead to unauthorized information disclosure, data manipulation or loss, or performing of business functions outside the user's capability.
+The final form of smart contract is the bytecode form. It can directly be deployed into the blockchain. To get the bytecode of a smart contract, it can be done by using a compiler or directly write a contract from a scratch in a bytecode form. When compiling the source code using a compiler, the user must adhere to the specification of the respective compiler version. Since Solidity is not the only compiler for EVM.
 
-## 2.1. Contract self-destruct should not be done by unauthorized actors
+## 2.1. Contract dependency
 
-`selfdestruct` instruction can be used to delete a smart contract from the blockchain and send the remaining ether to the destination address. Improper access control on the function with this ability allows malicious actors to terminate the smart contract.
+In a blockchain community, there are various standards proposed and accepted. The standard acts as a conformation of interfaces to let developers develop smart contracts that can communicate with other smart contracts seamlessly. For example, the ERC20 standard is a standard on the Ethereum blockchain about smart contracts that act as fungible tokens. To have the smart contract comply with the ERC20 standard, the developer must implement functions in the contract according to the standard.
 
-**Testing:**
+To comply with any standards, the developer must implement/override the required functions accordingly. On the other hand, there are special symbols that implicitly exist, known as the built-in symbols, but they should not be overridden with functions with the same name. The built-in symbols serve as the foundation of a contract. If the symbol's behavior is changed, the whole contract may not work normally.
 
-Check if there’s any function that invokes the `selfdestruct` instruction, and if there is, make sure that the function can only be called by the authorized parties only under necessary circumstances
+**Testing**
 
-This can be done by searching for all functions with `selfdestruct` or `suicide` opetion in the contract, and check the access control for the function, if unauthorized actors can execute the function, it is vulnerable, for example:
+**2.1.1. Contract implementation should comply with the standards specification**
+
+Implementation of tokens can be freely done; however, to make them compatible with other smart contracts, standard specifications such as ERC20 for fungible tokens, or ERC721 for non-fungible tokens should be followed:
+
+The specifications for ERC20 can be found at: [https://eips.ethereum.org/EIPS/eip-20#specification ](https://eips.ethereum.org/EIPS/eip-20#specification)The specifications for ERC721 can be found at: [https://eips.ethereum.org/EIPS/eip-721#specification](https://eips.ethereum.org/EIPS/eip-721#specification)
+
+**2.1.2. Built-in symbols should not be shadowed**
+
+Check that there is no shadowing of the builtin symbols in the smart contract.
 
 ```solidity
-contract Storage {
-	address payable private owner;
-	uint256 number;
-	constructor() {
-		owner = msg.sender;
-	}
-	function setNumber(uint256 _number) external {
-		number = _number;
-	}
-	function getNumber() external returns (uint256) {
-		return number;
- 	}
-	function kill() public {
-		selfdestruct(owner);
-	}
+contract FakeBuiltin {
+    uint256 public now;
+
+    function blockhash(uint blocknumber) public returns (bytes32) {
+        return keccak256(abi.encodePacked(blocknumber));
+    }
 }
-```
 
-As seen in the example above, the `kill()` function is a public function without any access control, allowing anyone to destroy this smart contract.
-
-**Solution:**
-
-1. Remove the self-destruct functionality from the smart contract; or
-2. If the functionality is required, implement a multisig scheme that requires multiple trusted parties to approve the self-destruct action
-
-## 2.2. Contract ownership should not be modifiable by unauthorized actors
-
-Functions with the ability to transfer the ownership of the contract should have a proper access control measure implemented to prevent unauthorized parties from taking over the contract ownership.
-
-**Testing:**
-
-If the contract ownership can be transferred, check that only the authorized parties can perform the ownership transfer action.
-
-This can be done by searching for all functions that can modify the state that stores the ownership of the contract. If any unauthorized party can use those functions to modify the state, it is vulnerable, for example:
-
-```solidity
-contract Owner {
-    address payable private owner;
-    constructor() {
-        owner = msg.sender;
+contract Shadow is FakeBuiltin {
+    function fakeNextPeriod() public view returns (uint256) {
+        return now + 86400;
     }
-    function changeOwner(address _owner) external {
-        require(msg.sender == _owner, "Only owner can transfer ownership");
-        owner = _owner;
-    }
-    function withdraw() external {
-        require(msg.sender == owner, "Only owner can withdraw");
-        (bool sent, bytes memory data) = msg.sender.call{value: balance}("");
-        require(sent, "Failed to send Ether");
+
+    function fakeLastBlockhash() public returns (bytes32) {
+        return blockhash(block.number - 1);
     }
 }
 ```
 
-In the contract above, the `changeOwner()` function checks that the `msg.sender` is the `_owner`; however, `_owner` is a function parameter which can be controlled by the caller, not the contract state that saves the address of the owner. Therefore, anyone can call this function to change the contract owner.
+## 2.2. Solidity
 
-**Solution:**
+For a smart contract that is written in Solidity, there are some points that could be enforced to improve the contract’s clarity. The Solidity complier has many versions. Each major version has changes that could break the old source code that was compiled by the older version of the compiler.
 
-Implement an access control measure to allow only the authorized parties to manage the ownership of the contract.
+**Testing**
 
-From the example above, the flaw can be resolved by editing the checking condition for the `changeOwner()` function to check from the state instead of checking from the parameter.
+**2.2.1. Solidity compiler version should be specific**
 
-```solidity
-function changeOwner(address _owner) external {
-    require(msg.sender == owner, "Only owner can transfer ownership");
-    owner = _owner;
-}
-```
-
-## 2.3. Access control should be defined and enforced for each actor roles
-
-Each function should have a list of eligible actor roles defined. Any other users outside of the roles defined should not be able to use the functions.
-
-**Testing:**
-
-Check that each function can be executed only by the roles defined.
-
-For example, the `claimAirdrop()` function should allow only the airdrop role to execute. In the following source code, there is no access control to ensure that function is executed by an eligible role/address which anyone can claim the airdrop via the `claimAirdrop()` function.
-
-```solidity
-address airdropAddr = 0x0C0fFEEC0FfeeC0FFeec0FfeEC0FFeE000000000;
-
-function claimAirdrop() external {
-    // Claim Airdrop Code.
-}
-```
-
-**Solution:**
-
-Implement an access control measure to prevent unauthorized actors from using the functions.
-
-For example, validating that function is executed by eligible role/address. In this case, using the `require()` function to ensure that function is executed by the `airdropAddr` address.
-
-```solidity
-address airdropAddr = 0x0C0fFEEC0FfeeC0FFeec0FfeEC0FFeE000000000;
-
-function claimAirdrop() external {
-    require(airdropAddr == msg.sender, "Only Airdrop Address!");
-    // Claim Airdrop Code.
-}
-```
-
-## 2.4. Authentication measures must be able to correctly identify the user
-
-The authentication measure used should be able to identify user correctly without allowing any malicious actor to bypass or act as another user.
-
-**Testing:**
-
-Check that the authentication cannot be bypassed, spoofed, or replayed by a malicious actor
-
-**Solution:**
-
-Implement an authentication scheme based on the business design that prevents a malicious actor from bypassing the authentication or acting as another user.
-
-## 2.5. Smart contract initialization should be done only once by an authorized party
-
-The initial states of a smart contract can be initialized through the constructor or a special function designed for the initialization. Initialization is required for the contracts that are using the proxy pattern, as the constructor cannot be used. It is important that the initialization should be done only once by the authorized account to prevent the contract states from being overwritten.
-
-**Testing:**
-
-Check that the initialization function can be used only once, and only by the authorized party.
-
-```solidity
-contract Initialize {
-    address public owner;
-
-    function initialize() external {
-        owner = msg.sender;
-    }
-
-    function withdraw(address to, uint256 amount) external {
-        require(msg.sender == owner, "Only the owner can withdraw");
-        (bool success, ) = to.call{value: amount}("");
-        require(success, "Transfer failed");
-    }
-}
-```
-
-**Solution:**
-
-Implement a condition check to prevent the initialization from being executed multiple times or by unauthorized users.
-
-```solidity
-contract Initialize {
-    address public owner;
-    bool isInitialized;
-
-    function initialize() external {
-        require(!isInitialized, "The contract is already initialized");
-        owner = msg.sender;
-        isInitialized = true;
-    }
-
-    function withdraw(address to, uint256 amount) external {
-        require(msg.sender == owner, "Only the owner can withdraw");
-        (bool success, ) = to.call{value: amount}("");
-        require(success, "Transfer failed");
-    }
-}
-```
-
-## 2.6. tx.origin should not be used for authorization
-
-When `tx.origin` is used for authorization, it is possible for other contracts to call and perform actions using the permission of the transaction signer, which may not be intended.
-
-**Testing:**
-
-Check that `tx.origin` is not used for authorization.
-
-Take a look at the following example contract:
-
-```solidity
-contract Treasury {
-    address public owner;
-
-    constructor() {
-        owner = tx.origin;
-    }
-
-    function withdrawTo(address to, uint256 amount) payable external {
-        require(tx.origin == owner, "Only the owner can use this function");
-        (bool success, ) = to.call{value: amount}("");
-        require(success, "Transfer failed");
-    }
-
-    receive() external payable {}
-}
-```
-
-By using the `tx.origin` for the authorization, an attacker can create a malicious contract that calls the `Treasury.withdrawTo()` function. If the real owner execute a function in that malicious contract, the funds can be unknowingly transferred from the contract.
-
-**Solution:**
-
-Change the authorization checking to `msg.sender`.
+Check that the compiler version is locked to one specific version. This can be done by looking at the pragma solidity flag at the top of the contract source code file. Only one specific version should be used, not multiple, for example:
 
 ```solidity
 // SPDX-License-Identifier: MIT
-contract Treasury {
-    address public owner;
-
-    constructor() {
-        owner = msg.sender;
-    }
-
-    function withdrawTo(address to, uint256 amount) external {
-        require(msg.sender == owner, "Only the owner can use this function");
-        (bool success, ) = to.call{value: amount}("");
-        require(success, "Transfer failed");
-    }
-
-    receive() external payable {}
-}
+pragma solidity 0.8.20;
 ```
 
-## 2.7. Signature verification must contain all necessary data and have protection against signature replay attack
+**2.2.2. State and function visibility should be explicitly labeled**
 
-The Ethereum signed message can be used to authorize a user without creating a transaction on the blockchain. However, when using signature verification as an authorization method, the signed message must include all necessary data according to the authorization context. Furthermore, if a signed message is designed to be used only once, the signature replay attack protection mechanism must be implemented.
-
-**Testing:**
-
-The following `NFTMarketplace` contract has a `_verifySignature()` function to verify the signature when the user executes `buy()` function. The seller must sign the message first, and then the buyer will supply the signature and the signer as inputs when calling `buy()` function. However, this implementation is vulnerable to a signature replay attack and also lacks necessary data that should be in the signed message, such as order type and expiration time.
+State variables and functions have the default visibility assigned to them. The default visibility for state variables is `internal`, while the default visibility for functions is `public`. Labeling the visibility explicitly allows easy identification of the access scope.
 
 ```solidity
-contract NFTMarketplace {
-    // NFTMarketplace contract logic
+contract Visibility {
+    uint256 private state;
 
-    function _verifySignature(address _nftAddress, uint256 _tokenId, uint256 _price, bytes memory _signature, address _signer) internal pure returns(bool) {
-        bytes32 messageHash = keccak256(abi.encodePacked(_nftAddress, _tokenId, _price));
-        bytes32 signedMessageHash = getEthSignedMessageHash(messageHash);
-        return recoverSigner(signedMessageHash, _signature) == _signer;
+    function setState(uint256 newState) external {
+        state = newState;
     }
 
-    function buy(address _nftAddress, uint256 _tokenId, uint256 _price, bytes memory _signature, address _signer) external {
-        require(_verifySignature(_nftAddress, _tokenId, _price, _signature, _signer));
-        
-        // buy function logic
+    function getState() view external returns (uint256) {
+        return state;
     }
-
-    // NFTMarketplace contract logic
 }
 ```
 
-From the example above, since it lacks an order type in the signed message, the attacker can use the signed message of the seller in both buy and sell. The signed message is also valid forever because there is no expiration check. The valid signature can also be used multiple times.
+**2.2.3. Functions that are never called internally should not have public visibility**
 
-**Solution:**
+Public functions with reference type parameters copy calldata to memory when being executed, while external functions can read directly from calldata. Memory allocation uses more resources (gas) than reading directly from calldata. Therefore, public functions that are never called internally by the contract itself should have external visibility. Furthermore, this improves the readability of the contract, allowing clear distinction between functions that are externally used and functions that are also called internally.
 
-Adding `_isSell` and `_expiry` to the message when signing it and validating it in the `buy()` function should prevent the attacker from abusing the order type and permanent validity of the signature. To prevent the signature replay attack, add the `_nonce` to the message and mark the signature as used with the `usedSignature` mapping state.
+Please note that the increase of gas usage is no longer applicable to smart contracts compiled with Solidity version `0.6.9` and later, as the data location keywords are required to be chosen and specified explicitly for reference type parameters regardless of the function visibility.
 
-Additionally, adding `address(this)` to the message can prevent the cross-contract signature replay attack, and adding `block.chainid` to the message can prevent the cross-chain signature replay attack. Furthermore, the EIP712 can be used to improve the readability of the signed message. The `EIP712Domain` also includes the platform name, version, verifying contract address, and chain ID, which is enough to protect against cross-contract and cross-chain signature replay attacks.
+The testing can be done by checking for public functions that are never called internally from the contract itself.
 
 ```solidity
-contract NFTMarketplace {
-    // NFTMarketplace contract logic
+contract Visibility {
+    uint256 private state;
 
-    function _verifySignature(address _nftAddress, uint256 _tokenId, uint256 _price, bool _isSell, uint256 _expiry, uint256 _nonce, bytes memory _signature, address _signer) internal view returns(bool) {
-        bytes32 messageHash = keccak256(abi.encodePacked(_nftAddress, _tokenId, _price, _isSell, _expiry, _nonce, address(this), block.chainid));
-        bytes32 signedMessageHash = getEthSignedMessageHash(messageHash);
-        return recoverSigner(signedMessageHash, _signature) == _signer;
+    function setState(uint256 newState) external {
+        state = newState;
     }
 
-    function buy(address _nftAddress, uint256 _tokenId, uint256 _price, bool _isSell, uint256 _expiry, uint256 _nonce, bytes memory _signature, address _signer) external payable {
-        require(_isSell);
-        require(_expiry >  block.number);
-        require(!usedSignature[_signature]);
-        require(_verifySignature(_nftAddress, _tokenId, _price, _isSell, _expiry, _nonce, _signature, _signer));
-        usedSignature[_signature] = true;
-        
-        // buy function logic
+    function getState() view public returns (uint256) {
+        return state;
     }
-
-    // NFTMarketplace contract logic
 }
 ```
+
+## Checklist
+
+* Contract implementation should comply with the standards specification
+* Built-in symbols should not be shadowed
+* Floating pragma version should not be used
+* State and function visibility should be explicitly labeled
+* Functions that are never called internally should not have public visibility

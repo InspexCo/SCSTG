@@ -1,127 +1,143 @@
-# 3. Error Handling and Logging
+# 3. Testing External Interaction
 
-Error handling and logging are the keys in making errors in smart contracts traceable, directing the execution flow to the proper path depending on the execution result, allowing the users to know where and how the contract fails, and making it possible to trance the past actions done on the smart contract.
+Some smart contracts can operate without any interaction with external contracts. But for some, they cannot operate without interactions with external contracts. A smart contract in EVM can interact with each other by making external calls to another contract (a contract can technically make an external call to itself) to update their states or fetch some data.
 
-## 3.1. Function return values should be checked to handle different results
+Smart contracts that have functionality that depends on external contracts can have unforeseen risks that they cannot control. If the address of the external contract is not a trusted address, the owner of the external contract can manipulate the function that the other contracts rely on to gain benefit from the affected contracts.
 
-Failure in function callings can be implemented in various ways, such as reverting the transaction on failure, or returning false on failure. Improper handling of the return value allows failure execution to pass through and cause unexpected results.
+## **3.1. Invoking external calls** <a href="#invoking-external-calls" id="invoking-external-calls"></a>
 
-**Testing:**
+There are three types of call instructions in EVM: `STATICCALL`, `CALL`, and `DELEGATECALL`. For an internal function call, EVM uses `JUMP` instruction instead of the mentioned call instruction. The `STATICCALL` instruction is a call that does not change the states of blockchains. It can be used to call a function that doesn't change states, e.g., functions with `view` and `pure` visibility. Unlike the `CALL` and `DELEGATECALL` instructions, they can be used to call a contract and affect states on the blockchain. But they have a distinct use case.
 
-Check that the return values from all function callings are handled.
+The `CALL` instruction has the targeted address contract execute the function and return the value back to the caller.
 
-Take a look at the following example contract:
+Similarly, the `DELEGATECALL` instruction executes the function at the targeted address but with the states of the caller, which include the value of the `msg.sender` state. Since it executes with targeted contract implementation but the states of the caller are affected, using the `DELEGATECALL` instruction to call an untrusted contract could cause serious effects to the caller's states. The target of the `DELEGATECALL` instruction must always be controlled thoroughly.
+
+**Testing**
+
+**3.1.1. Unknown external components should not be invoked**
+
+Check that only known and trusted contracts are invoked. Please have a look at the following example vulnerable contract.
 
 ```solidity
-interface IToken {
-    function transferFrom(address sender, address receiver, uint256 amount) external returns (bool);
+import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
+
+interface IRouter {
+    function swapExactTokensForTokens(
+        uint amountIn,
+        uint amountOutMin,
+        address[] calldata path,
+        address to,
+        uint deadline
+    ) external returns (uint[] memory amounts);
 }
 
-contract Bank {
+contract UnsafeVault {
+    using SafeERC20 for IERC20;
+    mapping(address => uint256) public balances;
+    IERC20 public token;
 
-    mapping(address => mapping(address => uint256)) public balances;
+    constructor(IERC20 _token) {
+        token = _token;
+    }
 
-    constructor() {}
+    function swapAndDeposit(IRouter router, IERC20 srcToken, uint256 amount, uint256 amountOutMin) external {
+        srcToken.safeTransferFrom(msg.sender, address(this), amount);
+        address[] memory path;
+        path[0] = address(srcToken);
+        path[1] = address(token);
+        srcToken.safeIncreaseAllowance(address(router), amount);
+        uint256[] memory amounts = router.swapExactTokensForTokens(amount, amountOutMin, path, address(this), block.timestamp);
+        balances[msg.sender] += amounts[1];
+    }
 
-    function deposit(address _token, uint256 _amount) public payable {
-        balances[_token][msg.sender] += _amount;
-        IToken(_token).transferFrom(msg.sender, address(this), _amount);
+    function withdraw(uint256 amount) external {
+        balances[msg.sender] -= amount;
+        token.transfer(msg.sender, amount);
     }
 }
 ```
 
-It is possible for the token to be implemented by returning false on transfer failure instead of reverting, causing the user’s balance to increase without actually transferring the funds in.
+In the contract above, the `router` can be set to any contract, allowing the attacker to implement a malicious contract that returns a high balance without actually swapping. Therefore, the smart contract should perform external calls to only known and trusted smart contracts, or define a whitelist of trustable contracts.
 
-**Solution:**
+**3.1.2.** **Delegatecall should not be used on untrusted contracts**
 
-Implement a conditional checking to handle the function that returns value.
+Check that `delegatecall` is only used on trusted contracts.
 
 ```solidity
-// SPDX-License-Identifier: GPL-3.0
-
-pragma solidity ^0.8.0;
-
-interface IToken {
-    function transferFrom(address sender, address receiver, uint256 amount) external returns (bool);
-}
-contract Bank {
-
-    mapping(address => mapping(address => uint256)) public balances;
-
-    constructor() {}
-
-    function deposit(address _token, uint256 _amount) public payable {
-        balances[_token][msg.sender] += _amount;
-        bool success = IToken(_token).transferFrom(msg.sender, address(this), _amount);
-        require(success, "transferFrom failed");
+contract Worker {
+    address public owner;
+    function work(address worker) external {
+        worker.delegatecall(bytes4(keccak256("work()")));
     }
 }
 ```
 
-## 3.2. Privileged functions or modifications of critical states should be logged
+In the example contract above, the `delegatecall` is used on a user supplied address, worker, allowing the attacker to create a contract with the `work()` function and perform arbitrary actions on the contract, such as assigning slot 0 with the new address as the `owner`.
 
-Event logs can be used by the users to easily monitor the actions or changes happening in the smart contract. Execution of critical state modification functions should be logged to allow the community to monitor and take proper measures for each action being performed on the smart contract.
+**3.1.3. Invoke function with “this” keyword should be used with caution**
 
-**Testing:**
+The `this` keyword in Solidity is used to retrieve the properties of the current smart contract address. When using `this` to invoke a function (this.'functionName') in the smart contract, it means the contract making an external call to the function to itself, which change the msg.sender from the former sender into the the contract itself.
 
-Check that events are emitted for the execution of all privileged functions.
-
-```solidity
-function updateMultiplier(uint256 multiplierNumber) public onlyOwner {
-    BONUS_MULTIPLIER = multiplierNumber;
-}
-```
-
-**Solution:**
-
-Emit events in the privileged functions.
+The test can be done by checking for the use of this.'functionName' statement that affects the logic of the use of `msg.sender`, and make sure that it is correct according to the business design.
 
 ```solidity
-event UpdateMultiplier(uint256 newMultiplierNumber);
-function updateMultiplier(uint256 multiplierNumber) public onlyOwner {
-    BONUS_MULTIPLIER = multiplierNumber;
-    emit UpdateMultiplier(multiplierNumber);
-}
-```
+import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import "@openzeppelin/contracts/token/ERC721/IERC721.sol";
 
-## 3.3. Modifier should not skip function execution without reverting
-
-Logics and conditions can be implemented in function modifiers. It is possible for the modifier to skip the execution of the function, causing the default value to be returned. This can cause unexpected value to be returned and used.
-
-**Testing:**
-
-Check that the modifier cannot skip the execution of the function without reverting.
-
-Take a look at the following example contract:
-
-```solidity
-contract Modifier {
-    bool public maintenance = true;
-    uint256 public price = 10;
-
-    modifier notMaintenance() {
-        if(!maintenance) {
-            _;
+contract SimpleNFTMarketplace {
+    uint256 public offerIdCounter;
+    mapping(uint256 => Offer) public idToOffer;
+    enum Status {
+        NONE,
+        CREATED,
+        CANCELED,
+        SWAPPED
+    }
+    struct Offer {
+        address owner;
+        IERC721 sellToken;
+        uint256 sellId;
+        IERC20 buyToken;
+        uint256 buyAmount;
+        Status status;
+    }
+    // deposit nft
+    function offer(IERC721 sellToken, uint256 sellId, IERC20 buyToken, uint256 buyAmount) public {
+        Offer memory offer = Offer(
+            msg.sender,
+            sellToken,
+            sellId,
+            buyToken,
+            buyAmount,
+            Status.CREATED
+        );
+        idToOffer[++offerIdCounter] = offer;
+        IERC721(sellToken).transferFrom(msg.sender, address(this), sellId);
+    }
+   
+    // sell multiple nft at once
+    function bulkOffer(IERC721[] calldata sellTokens, uint256[] calldata sellIds, IERC20[] calldata buyTokens, uint256[] calldata buyAmounts) public {
+        for (uint256 i = 0; i < sellTokens.length; ++i) {
+            this.offer(sellTokens[i], sellIds[i], buyTokens[i], buyAmounts[i]);
         }
     }
-    function getPrice() public view notMaintenance returns(uint256) {
-        return price;
+
+    // accept offer
+    function buy(uint256 offerId) public {
+        Offer storage offer = idToOffer[offerId];
+        require(offer.status == Status.CREATED, "invalid status");
+        offer.status = Status.SWAPPED;
+        IERC20(offer.buyToken).transferFrom(msg.sender, offer.owner, offer.buyAmount);
+        IERC721(offer.sellToken).transferFrom(address(this), msg.sender, offer.sellId);
     }
 }
 ```
 
-If the `maintenance` state is true, the logic of the `getPrice()` function will not be executed. This causes the `getPrice()` to return 0, which is the default value.
+The `offer()` function allows users to offer NFTs for sale through the `buy()` function, and the `bulkOffer()` function allows users to offer multiple NFTs for sale in a single transaction. The owner of the offered NFTs will be `msg.sender`. However, because the `bulkOffer()` function applies `this.offer()`, the caller will be the contract address rather than an EOA. This means that an attacker could steal NFTs from the contract by calling the `bulkOffer()` function with existing NFTs in the contract, along with a worthless token, and then executing the `buy()` function to acquire those NFTs.
 
-**Solution:**
+## Checklist
 
-Revert the transaction in the modifier if the required condition is not fulfilled.
-
-```solidity
-modifier notMaintenance() {
-    if(!maintenance) {
-      _;
-    } else {
-      revert("Contract is under maintenance");
-    }
-}
-```
+* Unknown external components should not be invoked
+* `delegatecall` should not be used on untrusted contracts
+* Calling itself is counted as making an external call to itself, so the invariants should be adjusted to fulfill

@@ -1,135 +1,55 @@
-# 7. Arithmetic
+# 7. Testing Randomness
 
-Mathematical operations on different programming languages and platforms may work differently. The arithmetic operations done in the smart contract should be able to safely handle the whole range of possible values.
+EVM does not have a function for a contract to get a random number natively. In blockchain, the transactions will be sequentially executed in a batch; we called it a `block`. Every transaction in the same block will be executed within the same block parameters, e.g., block number and block timestamp. Relying on the block parameters as an entropy source is also not possible because other transactions within the same block can also access the same value and be able to generate the same value from the random.&#x20;
 
-## 7.1. Values should be checked before performing arithmetic operations to prevent overflows and underflows
+Implementing a random function in EVM is quite challenging, but not impossible. There are many ways to achieve it, but each way has a different trade-off, and some are considered insecure. We will show you how to test the random functions.
 
-Each state or variable can store values in a specific range depending on their data type. If the values are not checked before performing arithmetic operations, overflows or underflows can happen which perform wrap-around on the value, resulting in unintended outputs.
+## 7.1. External Source
 
-**Testing:**
+Since the contract cannot rely on the source of randomness itself, it would be more feasible to get the source of randomness from an external source, the oracle. The off-chain entity can generate a pseudo-random number and feed the number into the blockchain to act as a source of randomness for the blockchain.
 
-Check that Solidity compiler version is before 0.8.0 and verify all arithmetic operations are not affected by overflows and underflows.
+**Testing**
 
-This can be done by looking at each arithmetic operation and examining whether the range of the result exceeds the range of the declared data type or not, for example:
+**7.1.1. VRF**
 
-```solidity
-pragma solidity 0.7.6;
+VRF stands for Verifiable Random Function. It is a function that can emit a pseudo-random value, and the value can be verified to be really unbiasedly random. The VRF needs to stay off-chain to be able to produce an unpredictable number. For example, Chainlink's VRF ([https://docs.chain.link/vrf/v2/introduction](https://docs.chain.link/vrf/v2/introduction))
 
-mapping (address => uint8) balances;
+**7.1.2. Provenance hash**
 
-function transfer(address _to, uint8 _amount) external {
-	require(balances[msg.sender] - _amount >= 0, "Insufficient balance");
-	balances[msg.sender] -= _amount;
-	balances[_to] += _amount;
-}
-```
+Provenance hash is a kind of commit-and-reveal scheme. Usually used in situations where there is a party responsible for using some random values, The provenance hash is the hash of the random value that the party has privately generated off-chain. The party can publish the proof hash before revealing the result. When the random number has been revealed, the provenance hash can be used as proof of the number's integrity.&#x20;
 
-In the source code above, if the `_amount` is higher than the balance of the sender, the result will be wrapped around from the underflow, allowing the condition in the require statement to be fulfilled. This can cause the balance of the sender to be inflated. Also, if the balance of the receiver is added with `_amount` and exceeds the limit of `uint8` (2^8 - 1), the balance will overflow and wrap around to 0.
+## 7.2. Internal Source
 
-**Solution:**
+Since the contract cannot rely on the built-in functions or the block parameter as a secure source of randomness, There are schemes that could circumvent this problem with some trade-offs. By using these schemes, the contract can use the not-secure random number from the built-in functions or the block parameter without being taken advantage of. There is a scheme called the commit-and-reveal scheme, or commitment scheme. This scheme has the participants commit their values first, then reveal the results of the committed values. By doing this, the participants cannot alter their result after knowing the revelation. There are many variations of the commit-and-reveal scheme, depending on the committed data.
 
-1. Check the arithmetic operations for overflows and underflows, e.g., using OpenZeppelin’s SafeMath library; or
-2. Use Solidity compiler version 0.8.0 or above
+**Testing**
 
-## 7.2. Explicit conversion of types should be checked to prevent unexpected results
+**7.2.1. Future block hash**
 
-Data type of a variable can be cast to another type explicitly; however, if the destination type cannot hold the values of the original variable, unexpected values can be yielded from the truncation or padding.
-
-Casting of types on Solidity works as follows:
-
-**Integer Conversion:**
-
-Converting a larger integer type to a smaller type will trim the higher bits.
+The block hash is the hash value of the transaction in that block. It is a deterministic value once the block has been mined; otherwise, it is zero, including the block hash of the block that is older than 256 blocks. The commit-and-reveal scheme can use the future block number to decide the reveling block and use the blockhash of that block as the random number.
 
 ```solidity
-uint32 a = 0x12345678;
-uint16 b = uint16(a); // b will be 0x5678
-```
+contract FutureBlockhash {
+    /// Stores the block of each address.
+    mapping(address => uint256) public revealBlock;
 
-Converting a smaller integer type to a larger type will pad the higher bits, and the resulting value will be equal to the original.
-
-```solidity
-uint16 a = 0x1234;
-uint32 b = uint32(a); // b will be 0x00001234
-```
-
-**Fixed-Size Byte Conversion:**
-
-Converting a larger byte type to a smaller type will trim the lower bits.
-
-```solidity
-bytes4 a = 0x12345678;
-bytes2 b = bytes2(a); // b will be 0x1234
-```
-
-Converting a smaller byte type to a larger type will pad the lower bits.
-
-```solidity
-bytes2 a = 0x1234;
-bytes4 b = bytes4(a); // b will be 0x12340000
-```
-
-For more details, please refer to Solidity documentation: [https://docs.soliditylang.org/en/latest/types.html#explicit-conversions](https://docs.soliditylang.org/en/latest/types.html#explicit-conversions)
-
-**Testing:**
-
-Check that the type conversion supports the whole range of the intended values, or the trimming and padding are working as intended.
-
-```solidity
-contract Cast {
-    uint128 public pricePerItem;
-    mapping(address => uint256) public balances;
-
-    constructor(uint128 _pricePerItem) {
-        pricePerItem = _pricePerItem;
+    /// User select a future block as a source of randomness
+    function commitBlock(uint256 _futureBlock) external {
+        require(revealBlock[msg.sender] == 0, "Can only commit 1 time per address");
+        require(_futureBlock > block.number + 10, "Must commit to a future block at least 10 blocks");
+        revealBlock[msg.sender] = _futureBlock;
     }
 
-    function buy(uint amount) external payable {
-        uint128 price = uint128(pricePerItem * amount);
-        require(msg.value >= price);
-        balances[msg.sender] += amount;
+    function getRandomness() external view returns (uint256) {
+        uint256 selectedBlock = revealBlock[msg.sender];
+        require(block.number > selectedBlock, "Not reach the target block yet");
+        require(block.number <= selectedBlock + 256, "Commit expired");
+        return blockhash(selectedBlock);
     }
 }
 ```
 
-**Solution:**
+## Checklist
 
-Perform conditional checking to make sure that the whole range of possible values is supported.
-
-## 7.3. Integer division should not be done before multiplication to prevent loss of precision
-
-As integers do not support floating points, the result of division will be rounded down to the nearest whole integer. Performing division before multiplication can cause a loss of precision in the resulting calculation.
-
-**Testing:**
-
-Check that the division operation that results in truncation of precision is not done before multiplication.
-
-```solidity
-uint256 public constant FEE_RATE = 50;
-uint256 public constant TOTAL_FEE = 10000;
-
-function deposit(uint256 amount) public {
-	uint256 depositFee = amount / TOTAL_FEE * FEE_RATE;
-	uint256 deposit = amount - depositFee;
-	balances[address(treasury)] += depositFee;
-	balances[msg.sender] += deposit;
-	token.transferFrom(msg.sender, address(this), amount);
-}
-```
-
-For example, using the source code above, if the `amount` deposited is 87654321, the `depositFee` should be equal to:
-
-```solidity
-87654321 / 10000 * 50 = 438271.605
-```
-
-However, as the result is rounded down during the division, the result from the Solidity source code above will be equal to:
-
-```solidity
-87654321 / 10000 = 8765
-8765 * 50 = 438250
-```
-
-**Solution:**
-
-Order the operations to perform multiplication before division.
+* The design is properly implemented as the Commit & Reveal scheme
+* Result from random value generation should not be predictable
