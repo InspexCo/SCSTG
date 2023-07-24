@@ -147,6 +147,19 @@ The keypair on the EVM is generated using elliptic curve cryptography. It consis
 
 **Testing**
 
+Ethereum signed message can be used to authorize a user without creating a transaction on the blockchain. However, when using signature verification as an authorization method, the signed message must include all necessary data according to the authorization context. Furthermore, if a signed message is designed to be used only once, the signature replay attack protection mechanism must be implemented. There are several concerns, which are as follows:
+
+* the signature recovery function is correctly implemented and used.
+* the signature cannot be re-used.
+* the signature recovery function default address0 case is handled.
+* the signature malleability
+
+## **6.4.** Access control on critical function
+
+Critical functions are functions that can control the contract's critical state or doing the operations that could cause negative effects when used untimely. These function must have an access control to prevent them from being executed by unauthorized parties.
+
+**Testing**
+
 **6.3.1. The critical function should enforce an access control**
 
 The functions that can change critical states should not be accessible by anyone. It must have access control that allows only the suitably qualified party to access it, e.g., DAO governance.
@@ -165,8 +178,9 @@ function setOracle(address newOracle) external {
 
 * `tx.origin` should not be used for authentication
 * Authentication measures must be able to correctly identify the user
-* The roles' membership can be safely transferred
-* Least privilege principle should be used for the rights of each role
+* The signature recovery is correctly implemented and used
+* The signature cannot be re-used
 * Access control should be defined and enforced for each actor roles
 * Access control must be able to transfer to other entities safely
+* Least privilege principle should be used for the rights of each role
 * The critical function should enforce an access control
