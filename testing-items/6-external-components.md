@@ -160,7 +160,7 @@ Critical functions are functions that can control the contract's critical state 
 
 **Testing**
 
-**6.3.1. The critical function should enforce an access control**
+**6.4.1. The critical function should enforce an access control**
 
 The functions that can change critical states should not be accessible by anyone. It must have access control that allows only the suitably qualified party to access it, e.g., DAO governance.
 
