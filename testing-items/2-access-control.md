@@ -16,6 +16,20 @@ Implementation of tokens can be freely done; however, to make them compatible wi
 
 The specifications for ERC20 can be found at: [https://eips.ethereum.org/EIPS/eip-20#specification ](https://eips.ethereum.org/EIPS/eip-20#specification)The specifications for ERC721 can be found at: [https://eips.ethereum.org/EIPS/eip-721#specification](https://eips.ethereum.org/EIPS/eip-721#specification)
 
+```solidity
+// contracts/GLDToken.sol
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.0;
+
+import "@openzeppelin/contracts/token/ERC20/ERC20.sol";
+
+contract Token is ERC20 {
+    constructor(uint256 initialSupply) ERC20("Token", "TKN") {
+        _mint(msg.sender, initialSupply);
+    }
+}
+```
+
 **2.1.2. Built-in symbols should not be shadowed**
 
 Check that there is no shadowing of the builtin symbols in the smart contract.

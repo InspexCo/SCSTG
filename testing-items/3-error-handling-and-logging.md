@@ -1,6 +1,6 @@
 # 3. Testing External Interaction
 
-Some smart contracts can operate without any interaction with external contracts. But for some, they cannot operate without interactions with external contracts. A smart contract in EVM can interact with each other by making external calls to another contract (a contract can technically make an external call to itself) to update their states or fetch some data.
+A smart contract in EVM can interact with each other by making external calls to another contract (a contract can technically make an external call to itself) to update their states or fetch some data.
 
 Smart contracts that have functionality that depends on external contracts can have unforeseen risks that they cannot control. If the address of the external contract is not a trusted address, the owner of the external contract can manipulate the function that the other contracts rely on to gain benefit from the affected contracts.
 

@@ -36,7 +36,7 @@ contract Treasury {
 }
 ```
 
-By using `tx.origin` for the authorization, an attacker can create a malicious contract that calls the `Treasury.withdrawTo()` function. If the real owner executes a function in that malicious contract, the funds can be unknowingly transferred from the contract.
+By using `tx.origin` for the authorization, an attacker can create a malicious contract that calls the `Treasury.withdrawTo()` function. If the owner signs a transaction that executes a function in that malicious contract, the funds can be unknowingly transferred from the contract due to the fact that `tx.origin` is the owner.
 
 **6.1.2. Authentication measures must be able to correctly identify the user**
 
@@ -146,6 +146,8 @@ The contract should ensure that each role is allowed to perform its required tas
 The keypair on the EVM is generated using elliptic curve cryptography. It consists of a public key and a private key. The address of each user is derived from their public key, and only the corresponding private key can sign the transaction for the address. In EVM, there is a special function that can recover the public key from a message that is signed by a corresponded private key. With this function, there is a functionality that allows the user to sign a message (not a transaction), and the signed messages can be used by another party to do things on the user's behalf.
 
 **Testing**
+
+**6.3.1. Signed signature should be used properly**
 
 Ethereum signed message can be used to authorize a user without creating a transaction on the blockchain. However, when using signature verification as an authorization method, the signed message must include all necessary data according to the authorization context. Furthermore, if a signed message is designed to be used only once, the signature replay attack protection mechanism must be implemented. There are several concerns, which are as follows:
 

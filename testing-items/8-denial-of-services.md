@@ -137,6 +137,23 @@ The condition expression of a loop determines how many times the loop will be ex
 
 For the for loop expression, it has a special place for updating the iterator. Having multiple places that change the iterator could lead to unintended behavior in the contract. The test can be done by identifying the iterators of loops and inspecting the loop to see if there are any expressions that could change the iterator value.
 
+```solidity
+contract Buggy {
+    uint[] public myNumber;
+
+    function sumOfEvenElement() public returns (uint256){
+        uint256 total = 0;
+        for (uint i; i < myNumber.length - 1; i++) {
+            if (i % 2 == 0) {
+                total = total + myNumber[i];
+                i++;
+            }
+        }
+        return total;
+    }
+}
+```
+
 **8.5.2. Variable loop boundary**
 
 The number of executions of a loop should be a constant value. Depending on the number of executions on dynamic data, it can cause an unexpected outcome if the data has been altered inside the loop.
